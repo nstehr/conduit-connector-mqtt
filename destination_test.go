@@ -1,16 +1,16 @@
-package connectorname_test
+package mqtt_test
 
 import (
 	"context"
 	"testing"
 
-	connectorname "github.com/conduitio/conduit-connector-connectorname"
 	"github.com/matryer/is"
+	mqtt "github.com/nstehr/conduit-connector-mqtt"
 )
 
 func TestTeardown_NoOpen(t *testing.T) {
 	is := is.New(t)
-	con := connectorname.NewDestination()
+	con := mqtt.NewDestination()
 	err := con.Teardown(context.Background())
 	is.NoErr(err)
 }

@@ -1,28 +1,57 @@
-package connectorname
+package mqtt
 
 //go:generate paramgen -output=paramgen_src.go SourceConfig
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/conduitio/conduit-commons/config"
 	"github.com/conduitio/conduit-commons/opencdc"
 	sdk "github.com/conduitio/conduit-connector-sdk"
 )
 
+var (
+	errQos   = errors.New("qosError")
+	errTopic = errors.New("error reading from mqtt topic")
+)
+
 type Source struct {
 	sdk.UnimplementedSource
 
 	config           SourceConfig
+	client           *client
 	lastPositionRead opencdc.Position //nolint:unused // this is just an example
 }
 
 type SourceConfig struct {
 	// Config includes parameters that are the same in the source and destination.
 	Config
-	// SourceConfigParam is named foo and must be provided by the user.
-	SourceConfigParam string `json:"foo" validate:"required"`
+
+	Broker   string   `json:"broker" validate:"required"`
+	Username string   `json:"username" validate:"required"`
+	Password string   `json:"password" validate:"required"`
+	Topics   []string `json:"topics" default:"#"`
+	Port     int      `json:"port" default:"1883"`
+	QOS      int      `json:"qos" default:"0"`
+	ClientID string   `json:"clientId" default:"mqtt_conduit_client"`
+}
+
+type Position struct {
+	Topic string `json:"topic"`
+}
+
+func (p Position) toSdkPosition() opencdc.Position {
+	ps, err := json.Marshal(p)
+	// from rabbitmq conenector: https://github.com/conduitio-labs/conduit-connector-rabbitmq/blob/b746573fbbedc4a6b949817a0815ad45b523fd8a/utils.go#L35
+	if err != nil {
+		// this error should not be possible
+		panic(fmt.Errorf("error marshaling position to JSON: %w", err))
+	}
+	return ps
 }
 
 func NewSource() sdk.Source {
@@ -51,20 +80,30 @@ func (s *Source) Configure(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
+	if s.config.QOS > 2 {
+		return fmt.Errorf("%w: %d is not a valid QOS parameter", errQos, s.config.QOS)
+	}
 	return nil
 }
 
-func (s *Source) Open(_ context.Context, _ opencdc.Position) error {
+func (s *Source) Open(ctx context.Context, _ opencdc.Position) error {
 	// Open is called after Configure to signal the plugin it can prepare to
 	// start producing records. If needed, the plugin should open connections in
 	// this function. The position parameter will contain the position of the
 	// last record that was successfully processed, Source should therefore
 	// start producing records after this position. The context passed to Open
 	// will be cancelled once the plugin receives a stop signal from Conduit.
+	sdk.Logger(ctx).Info().Msg("Opening...")
+	client := newClient(s.config)
+	s.client = client
+	err := client.connect(ctx)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-func (s *Source) Read(_ context.Context) (opencdc.Record, error) {
+func (s *Source) Read(ctx context.Context) (opencdc.Record, error) {
 	// Read returns a new Record and is supposed to block until there is either
 	// a new record or the context gets cancelled. It can also return the error
 	// ErrBackoffRetry to signal to the SDK it should call Read again with a
@@ -79,7 +118,35 @@ func (s *Source) Read(_ context.Context) (opencdc.Record, error) {
 	// After Read returns an error the function won't be called again (except if
 	// the error is ErrBackoffRetry, as mentioned above).
 	// Read can be called concurrently with Ack.
-	return opencdc.Record{}, nil
+	sdk.Logger(ctx).Info().Msg("Reading..")
+	rec := opencdc.Record{}
+	select {
+	case <-ctx.Done():
+		err := ctx.Err()
+		if err != nil {
+			return rec, err
+		}
+		return rec, nil
+	default:
+		msg, ok := s.client.read(ctx)
+		if !ok {
+			return rec, errTopic
+		}
+		var (
+			pos = Position{
+				Topic: msg.Topic(),
+			}
+			sdkPos   = pos.toSdkPosition()
+			metadata = opencdc.Metadata{
+				"mqtt.topicName": msg.Topic(),
+				"mqtt.qos":       strconv.Itoa(int(msg.Qos())),
+			}
+			key     = opencdc.RawData([]byte(strconv.Itoa(int(msg.MessageID())))) // hack converting from int to string to bytes
+			payload = opencdc.RawData(msg.Payload())
+		)
+		rec = sdk.Util.Source.NewRecordCreate(sdkPos, metadata, key, payload)
+		return rec, nil
+	}
 }
 
 func (s *Source) Ack(_ context.Context, _ opencdc.Position) error {
