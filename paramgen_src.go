@@ -13,7 +13,7 @@ const (
 	SourceConfigPassword = "password"
 	SourceConfigPort     = "port"
 	SourceConfigQos      = "qos"
-	SourceConfigTopics   = "topics"
+	SourceConfigTopic    = "topic"
 	SourceConfigUsername = "username"
 )
 
@@ -53,7 +53,7 @@ func (SourceConfig) Parameters() map[string]config.Parameter {
 			Type:        config.ParameterTypeInt,
 			Validations: []config.Validation{},
 		},
-		SourceConfigTopics: {
+		SourceConfigTopic: {
 			Default:     "#",
 			Description: "",
 			Type:        config.ParameterTypeString,

@@ -8,36 +8,33 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/conduitio/conduit-commons/config"
 	"github.com/conduitio/conduit-commons/opencdc"
 	sdk "github.com/conduitio/conduit-connector-sdk"
 )
 
-var (
-	errQos   = errors.New("qosError")
-	errTopic = errors.New("error reading from mqtt topic")
-)
+var errQos = errors.New("qosError")
 
 type Source struct {
 	sdk.UnimplementedSource
 
-	config           SourceConfig
-	client           *client
-	lastPositionRead opencdc.Position //nolint:unused // this is just an example
+	config SourceConfig
+	client *client
 }
 
 type SourceConfig struct {
 	// Config includes parameters that are the same in the source and destination.
 	Config
 
-	Broker   string   `json:"broker" validate:"required"`
-	Username string   `json:"username" validate:"required"`
-	Password string   `json:"password" validate:"required"`
-	Topics   []string `json:"topics" default:"#"`
-	Port     int      `json:"port" default:"1883"`
-	QOS      int      `json:"qos" default:"0"`
-	ClientID string   `json:"clientId" default:"mqtt_conduit_client"`
+	Broker   string `json:"broker" validate:"required"`
+	Username string `json:"username" validate:"required"`
+	Password string `json:"password" validate:"required"`
+	Topic    string `json:"topic" default:"#"`
+	Port     int    `json:"port" default:"1883"`
+	QOS      int    `json:"qos" default:"0"`
+	ClientID string `json:"clientId" default:"mqtt_conduit_client"`
 }
 
 type Position struct {
@@ -74,8 +71,6 @@ func (s *Source) Configure(ctx context.Context, cfg config.Config) error {
 	// The SDK will validate the configuration and populate default values
 	// before calling Configure. If you need to do more complex validations you
 	// can do them manually here.
-
-	sdk.Logger(ctx).Info().Msg("Configuring Source...")
 	err := sdk.Util.ParseConfig(ctx, cfg, &s.config, NewSource().Parameters())
 	if err != nil {
 		return fmt.Errorf("invalid config: %w", err)
@@ -93,7 +88,6 @@ func (s *Source) Open(ctx context.Context, _ opencdc.Position) error {
 	// last record that was successfully processed, Source should therefore
 	// start producing records after this position. The context passed to Open
 	// will be cancelled once the plugin receives a stop signal from Conduit.
-	sdk.Logger(ctx).Info().Msg("Opening...")
 	client := newClient(s.config)
 	s.client = client
 	err := client.connect(ctx)
@@ -118,7 +112,6 @@ func (s *Source) Read(ctx context.Context) (opencdc.Record, error) {
 	// After Read returns an error the function won't be called again (except if
 	// the error is ErrBackoffRetry, as mentioned above).
 	// Read can be called concurrently with Ack.
-	sdk.Logger(ctx).Info().Msg("Reading..")
 	rec := opencdc.Record{}
 	select {
 	case <-ctx.Done():
@@ -127,10 +120,15 @@ func (s *Source) Read(ctx context.Context) (opencdc.Record, error) {
 			return rec, err
 		}
 		return rec, nil
-	default:
-		msg, ok := s.client.read(ctx)
-		if !ok {
-			return rec, errTopic
+	case msg := <-s.client.stream():
+		var msgKey string
+		msgID := msg.MessageID()
+		// in my limited testing, all message ids were coming in as 0.
+		// attempt here to give them something unique
+		if msgID <= 0 {
+			msgKey = fmt.Sprintf("%d", time.Now().Unix())
+		} else {
+			msgKey = strconv.FormatUint(uint64(msgID), 10)
 		}
 		var (
 			pos = Position{
@@ -141,7 +139,7 @@ func (s *Source) Read(ctx context.Context) (opencdc.Record, error) {
 				"mqtt.topicName": msg.Topic(),
 				"mqtt.qos":       strconv.Itoa(int(msg.Qos())),
 			}
-			key     = opencdc.RawData([]byte(strconv.Itoa(int(msg.MessageID())))) // hack converting from int to string to bytes
+			key     = opencdc.RawData([]byte(msgKey))
 			payload = opencdc.RawData(msg.Payload())
 		)
 		rec = sdk.Util.Source.NewRecordCreate(sdkPos, metadata, key, payload)
@@ -163,5 +161,6 @@ func (s *Source) Teardown(_ context.Context) error {
 	// Teardown signals to the plugin that there will be no more calls to any
 	// other function. After Teardown returns, the plugin should be ready for a
 	// graceful shutdown.
+	s.client.close()
 	return nil
 }
