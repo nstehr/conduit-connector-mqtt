@@ -1,6 +1,6 @@
-# Conduit Connector for <resource>
+# Conduit Connector for mqtt
 
-[Conduit](https://conduit.io) connector for <resource>.
+[Conduit](https://conduit.io) connector for mqtt.
 
 ## How to build?
 
@@ -20,24 +20,18 @@ A source connector pulls data from an external resource and pushes it to downstr
 
 | name                  | description                           | required | default value |
 |-----------------------|---------------------------------------|----------|---------------|
-| `source_config_param` | Description of `source_config_param`. | true     | 1000          |
+| `broker`              | mqtt broker to connect to             | true     |               |
+| `username`            | username to use to connect            | true     |               |
+| `password`            | password to use to connect            | true     |               |
+| `port`                | port on the broker to connect to      | false    | 1883          |
+| `qos`                 | the qos on the _receiving_ side       | false    | 0             |
+| `clientId`            | client id for the mqtt client         | false    | mqtt_conduit_client             |
+| `topic`               | topic to receive messages on. Can use [mqtt wildcard syntax](https://www.hivemq.com/blog/mqtt-essentials-part-5-mqtt-topics-best-practices/)           | false    | `#`           |
 
-## Destination
-
-A destination connector pushes data from upstream resources to an external resource via Conduit.
-
-### Configuration
-
-| name                       | description                                | required | default value |
-|----------------------------|--------------------------------------------|----------|---------------|
-| `destination_config_param` | Description of `destination_config_param`. | true     | 1000          |
 
 ## Known Issues & Limitations
+- Accepts only one topic literal. However, all wildcard syntax supported by mqtt is supported in the connector so by using wildcards you can effectively receive from multiple topics 
 
-- Known issue A
-- Limitation A
 
 ## Planned work
-
-- [ ] Item A
-- [ ] Item B
+- [ ] Destination connector
