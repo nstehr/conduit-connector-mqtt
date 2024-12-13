@@ -31,6 +31,7 @@ A source connector pulls data from an external resource and pushes it to downstr
 
 ## Known Issues & Limitations
 - Accepts only one topic literal. However, all wildcard syntax supported by mqtt is supported in the connector so by using wildcards you can effectively receive from multiple topics 
+- The mqtt spec dictates that the clientId must be unique per broker. So if you have multiple connectors or multiple pipelines you'll need to uniquely set the `clientId`
 
 
 ## Planned work
